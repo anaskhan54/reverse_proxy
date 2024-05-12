@@ -1,11 +1,10 @@
 use async_std::{
-    io::{BufReader, Result},
+    io::BufReader,
     net::{TcpListener, TcpStream},
     prelude::*,
 };
 use futures::StreamExt;
 use std::{env, io::prelude::*, str, time::Duration};
-use tokio::net::tcp;
 
 #[async_std::main]
 async fn main() {
@@ -81,9 +80,10 @@ async fn main() {
 
 async fn handle_connection(mut stream: TcpStream, domain: &str, lhost: &str, lport: u16) {
     //store the tcp stream in a buffer reader to imporve efficiency
+    println!("Connection established");
     let mut buf_reader = BufReader::new(&mut stream);
     let mut request_line = String::new();
-
+    async_std::task::sleep(Duration::from_secs(15)).await;
     buf_reader.read_line(&mut request_line).await.unwrap();
 
     // Parse the HTTP request line
