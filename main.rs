@@ -1,10 +1,10 @@
 use async_std::{
-    io::BufReader,
+    io::{BufReader, Result},
     net::{TcpListener, TcpStream},
     prelude::*,
 };
 use futures::StreamExt;
-use std::{env, io::prelude::*, str, time::Duration};
+use std::{env, str};
 
 #[async_std::main]
 async fn main() {
@@ -62,127 +62,97 @@ async fn main() {
         }
     }
     let listener = TcpListener::bind("127.0.0.1:80").await.unwrap();
+    println!("\x1b[33mproxy server started on port 80..\x1b[0m");
 
     listener
         .incoming()
         .for_each_concurrent(None, |tcp_stream| async {
-            let tcp_stream = tcp_stream.unwrap();
-            handle_connection(
-                tcp_stream,
-                domain.as_ref().unwrap(),
-                lhost.as_ref().unwrap(),
-                lport.unwrap(),
-            )
-            .await;
+            if let Ok(tcp_stream) = tcp_stream {
+                if let Err(e) = handle_connection(
+                    tcp_stream,
+                    domain.as_ref().unwrap(),
+                    lhost.as_ref().unwrap(),
+                    lport.unwrap(),
+                )
+                .await
+                {
+                    eprintln!("Error: {:?}", e);
+                }
+            }
         })
         .await;
 }
 
-async fn handle_connection(mut stream: TcpStream, domain: &str, lhost: &str, lport: u16) {
-    //store the tcp stream in a buffer reader to imporve efficiency
+async fn handle_connection(
+    mut stream: TcpStream,
+    domain: &str,
+    lhost: &str,
+    lport: u16,
+) -> Result<()> {
     println!("Connection established");
-    let mut buf_reader = BufReader::new(&mut stream);
-    let mut request_line = String::new();
-    async_std::task::sleep(Duration::from_secs(15)).await;
-    buf_reader.read_line(&mut request_line).await.unwrap();
 
-    // Parse the HTTP request line
-    println!("Request Line: {}", request_line);
-
-    let mut parts = request_line.trim().split_whitespace();
-
-    let method = parts.next().unwrap_or("UNKNOWN_METHOD");
-    let path = parts.next().unwrap_or("UNKNOWN_PATH");
-    let http_version = parts.next().unwrap_or("UNKNOWN_HTTP_VERSION");
-    println!(
-        "Method: {}, Path: {}, HTTP Version: {}",
-        method, path, http_version
-    );
-
-    // Read the HTTP headers until an empty line is encountered
+    let mut request = String::new();
     let mut headers = String::new();
+
+    //creating a buffer to store the request
+    let mut buf_reader = BufReader::new(&mut stream);
+
+    // Read the HTTP request line
+    buf_reader.read_line(&mut request).await?;
+
+    println!("Request: {:?}", request);
+
+    // Read the HTTP request headers until an empty line is encountered
     loop {
         let mut line = String::new();
-
-        buf_reader.read_line(&mut line).await.unwrap();
+        buf_reader.read_line(&mut line).await?;
         if line.trim().is_empty() {
             break;
         }
-        println!("header line: {}", line.trim());
+
         headers.push_str(&line);
     }
-    for line in headers.lines() {
-        if line.trim().starts_with("Host:") {
-            println!("Host header found");
-            let host_value = line.trim_start_matches("Host: ").trim();
-            println!("Host value: {}", host_value);
+    println!("Headers: {:?}", headers);
 
-            if host_value == domain {
-                println!("Host value matches domain: {}", domain);
-                let addr = format!("{}:{}", lhost, lport);
-                let mut destination_stream = TcpStream::connect(addr).await.unwrap();
+    let req = request + headers.as_str() + "\r\n";
 
-                println!("Request Line: {:?}", destination_stream);
+    println!("Request Recieved:\n{:?}", req);
 
-                destination_stream
-                    .write_all(request_line.as_bytes())
-                    .await
-                    .unwrap();
-            } else {
-                println!("Host value does not match domain: {}", domain)
-            }
+    let host_value = headers
+        .lines()
+        .find(|line| line.starts_with("Host:"))
+        .and_then(|line| line.split(":").nth(1).map(|value| value.trim()));
+
+    println!("Host value: {:?}", host_value);
+
+    match host_value {
+        Some(value) if value == domain => {
+            println!("Host value matches domain: {}", domain);
+
+            let addr = format!("{}:{}", lhost, lport);
+            println!("Destination server address: {}", addr);
+
+            let mut destination_stream = TcpStream::connect(addr).await.unwrap();
+            println!("Connected to destination server");
+
+            destination_stream.write_all(req.as_bytes()).await.unwrap();
+            destination_stream.flush().await.unwrap();
+
+            println!("Request forwarded to destination server");
+
+            let mut response = String::new();
+
+            let mut response_reader = BufReader::new(&mut destination_stream);
+
+            response_reader.read_line(&mut response).await.unwrap();
+
+            stream.write_all(response.as_bytes()).await.unwrap();
+            println!("{:?}", response);
+            println!("Response forwarded to client");
         }
+        Some(_) => println!("Host value does not match domain: {}", domain),
+        None => println!("Host header not found"),
     }
 
-    // Read the HTTP request body if present
-    let mut body = String::new();
-    buf_reader.read_to_string(&mut body).await.unwrap();
-    println!("Body:\n{}", body);
+    Ok(())
 }
-// //&need better error handling here
-// let http_request: Vec<_> = buf_reader
-//     .lines()
-//     .map(|result| result.unwrap())
-//     .take_while(|line| !line.is_empty())
-//     .collect();
-
-// println!("Request: {:#?}", http_request);
-// println!("Request headers: {:#?}", http_request[1].trim());
-// async_std::task::sleep(Duration::from_secs(10)).await;
-// // Extracting Host Header from the request
-// let mut host_value = None;
-// for line in &http_request {
-//     if line.starts_with("Host:") {
-//         host_value = Some(line.trim_start_matches("Host: ").trim().to_string());
-//         break;
-//     }
-// }
-
-// match host_value {
-//     Some(value) => {
-//         println!("Host value: {}", value);
-//         if value == domain {
-//             println!("Host value matches domain: {}", domain);
-
-//             // Sending the http_request to another http server specified by lhost and lport
-//             let destination = format!("{}:{}", lhost, lport);
-//             let mut destination_stream = TcpStream::connect(destination).unwrap();
-//             for line in &http_request {
-//                 destination_stream.write_all(line.as_bytes()).unwrap();
-//                 destination_stream.write_all(b"\r\n").unwrap();
-//             }
-//             destination_stream.write_all(b"\r\n").unwrap();
-
-//             // Forwarding the response from the destination server back to the client
-//             let mut response = String::new();
-//             let mut response_reader = BufReader::new(&mut destination_stream);
-//             response_reader.read_to_string(&mut response).unwrap();
-
-//             // Sending the response back to the client
-//             stream.write_all(response.as_bytes()).unwrap();
-//         } else {
-//             println!("Host value does not match domain: {}", domain);
-//         }
-//     }
-//     None => println!("Host header not found"),
-// }
