@@ -89,7 +89,7 @@ async fn handle_connection(
     lhost: &str,
     lport: u16,
 ) -> Result<()> {
-    println!("Connection established");
+    println!("\x1b[32mConnection established\x1b[0m");
 
     let mut request = String::new();
     let mut headers = String::new();
@@ -116,7 +116,7 @@ async fn handle_connection(
 
     let req = request + headers.as_str() + "\r\n";
 
-    println!("Request Recieved:\n{:?}", req);
+    println!("\x1b[33mRequest Recieved:{:?}\x1b[0m", req);
 
     let host_value = headers
         .lines()
@@ -133,21 +133,35 @@ async fn handle_connection(
             println!("Destination server address: {}", addr);
 
             let mut destination_stream = TcpStream::connect(addr).await.unwrap();
-            println!("Connected to destination server");
+            println!("\x1b[36mConnected to destination server\x1b[1m");
 
             destination_stream.write_all(req.as_bytes()).await.unwrap();
             destination_stream.flush().await.unwrap();
 
-            println!("Request forwarded to destination server");
+            println!("\x1b[32mRequest forwarded to destination server\x1b[1m");
 
-            let mut response = String::new();
+            // let mut response = String::new();
 
-            let mut response_reader = BufReader::new(&mut destination_stream);
+            // let mut response_reader = BufReader::new(&mut destination_stream);
 
-            response_reader.read_line(&mut response).await.unwrap();
+            // response_reader.read_to_string(&mut response).await.unwrap();
 
-            stream.write_all(response.as_bytes()).await.unwrap();
-            println!("{:?}", response);
+            // stream.write_all(response.as_bytes()).await.unwrap();
+
+            /*
+             * Transfering the response from the destination server
+             * to the client in chunks so that it become more faster
+             */
+            let mut buf = [0u8; 4096];
+            loop {
+                let bytes_read = destination_stream.read(&mut buf).await?;
+                if bytes_read == 0 {
+                    break;
+                }
+                stream.write_all(&buf[..bytes_read]).await?;
+            }
+
+            // println!("{:?}", response);
             println!("Response forwarded to client");
         }
         Some(_) => println!("Host value does not match domain: {}", domain),
