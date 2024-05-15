@@ -141,19 +141,30 @@ async fn start_proxy_server(proxy_map: HashMap<String, (String, String)>) {
     let listener = TcpListener::bind("0.0.0.0:80").await.unwrap();
     println!("\x1b[33mproxy server started on port 80..\x1b[0m");
 
+    // listener
+    //     .incoming()
+    //     .for_each_concurrent(None, |tcp_stream| {
+    //         let proxy_map = proxy_map.clone(); // Clone the proxy_map
+    //         async move {
+    //             if let Ok(tcp_stream) = tcp_stream {
+    //                 for (domain, (lhost, lport)) in proxy_map.iter() {
+    //                     if let Err(e) =
+    //                         handle_connection(tcp_stream.clone(), domain, lhost, lport).await
+    //                     {
+    //                         eprintln!("Error: {:?}", e);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     })
+    //     .await;
+
     listener
         .incoming()
-        .for_each_concurrent(None, |tcp_stream| {
-            let proxy_map = proxy_map.clone(); // Clone the proxy_map
-            async move {
-                if let Ok(tcp_stream) = tcp_stream {
-                    for (domain, (lhost, lport)) in proxy_map.iter() {
-                        if let Err(e) =
-                            handle_connection(tcp_stream.clone(), domain, lhost, lport).await
-                        {
-                            eprintln!("Error: {:?}", e);
-                        }
-                    }
+        .for_each_concurrent(None, |tcp_stream| async {
+            if let Ok(tcp_stream) = tcp_stream {
+                if let Err(e) = handle_connection(tcp_stream, proxy_map.clone()).await {
+                    eprintln!("Error: {:?}", e);
                 }
             }
         })
@@ -162,10 +173,7 @@ async fn start_proxy_server(proxy_map: HashMap<String, (String, String)>) {
 
 async fn handle_connection(
     mut stream: TcpStream,
-    domain: &str,
-    lhost: &str,
-    // lport: u16,
-    lport: &str,
+    proxy_map: HashMap<String, (String, String)>,
 ) -> Result<()> {
     println!("\x1b[32mConnection established\x1b[0m");
 
@@ -204,45 +212,34 @@ async fn handle_connection(
     println!("Host value: {:?}", host_value);
 
     match host_value {
-        Some(value) if value == domain => {
-            println!("Host value matches domain: {}", domain);
+        Some(value) => match proxy_map.get(value) {
+            Some((lhost, lport)) => {
+                println!("Host value matches domain: {}", value);
 
-            let addr = format!("{}:{}", lhost, lport);
-            println!("Destination server address: {}", addr);
+                let addr = format!("{}:{}", lhost, lport);
+                println!("Destination server address: {}", addr);
 
-            let mut destination_stream = TcpStream::connect(addr).await.unwrap();
-            println!("\x1b[36mConnected to destination server\x1b[1m");
+                let mut destination_stream = TcpStream::connect(addr).await.unwrap();
+                println!("\x1b[36mConnected to destination server\x1b[1m");
 
-            destination_stream.write_all(req.as_bytes()).await.unwrap();
-            destination_stream.flush().await.unwrap();
+                destination_stream.write_all(req.as_bytes()).await.unwrap();
+                destination_stream.flush().await.unwrap();
 
-            println!("\x1b[32mRequest forwarded to destination server\x1b[1m");
+                println!("\x1b[32mRequest forwarded to destination server\x1b[1m");
 
-            // let mut response = String::new();
-
-            // let mut response_reader = BufReader::new(&mut destination_stream);
-
-            // response_reader.read_to_string(&mut response).await.unwrap();
-
-            // stream.write_all(response.as_bytes()).await.unwrap();
-
-            /*
-             * Transfering the response from the destination server
-             * to the client in chunks so that it become more faster
-             */
-            let mut buf = [0u8; 4096];
-            loop {
-                let bytes_read = destination_stream.read(&mut buf).await?;
-                if bytes_read == 0 {
-                    break;
+                let mut buf = [0u8; 4096];
+                loop {
+                    let bytes_read = destination_stream.read(&mut buf).await?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    stream.write_all(&buf[..bytes_read]).await?;
                 }
-                stream.write_all(&buf[..bytes_read]).await?;
-            }
 
-            // println!("{:?}", response);
-            println!("Response forwarded to client");
-        }
-        Some(_) => println!("Host value does not match domain: {}", domain),
+                println!("Response forwarded to client");
+            }
+            None => println!("Host value exists but not found in proxy map"),
+        },
         None => println!("Host header not found"),
     }
 
