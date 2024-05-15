@@ -4,9 +4,10 @@ use async_std::{
     prelude::*,
 };
 use futures::StreamExt;
+use std::collections::HashMap;
+use std::io::{self, BufRead};
 use std::process::Command;
-
-use std::{env, str};
+use std::{env, fs, str};
 
 #[cfg(target_os = "windows")]
 fn kill_instances() {
@@ -31,10 +32,50 @@ async fn main() {
 
     if args.len() > 1 {
         if args[1] == "start" {
+            //check if config file exists
+
+            let file_name = if cfg!(windows) {
+                "reverse_proxy.conf"
+            } else {
+                "./reverse_proxy.conf"
+            };
+
+            if fs::metadata(file_name).is_ok() {
+                // check if the file is valid, if yes then print what it got
+                let mut proxy_map = std::collections::HashMap::new();
+
+                if let Ok(file) = fs::File::open(&file_name) {
+                    let lines = io::BufReader::new(file).lines();
+                    for line_result in lines {
+                        if let Ok(line_contents) = line_result {
+                            let parts: Vec<&str> = line_contents.split_whitespace().collect();
+                            if parts.len() == 3 {
+                                let domain = parts[0].to_string();
+                                let lhost = parts[1].to_string();
+                                let lport = parts[2].to_string();
+                                proxy_map.insert(domain, (lhost, lport));
+                            } else {
+                                println!("Invalid config file: {}", file_name);
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    println!("Unable to open config file: {}", file_name);
+                    return;
+                }
+
+                for (domain, (lhost, lport)) in &proxy_map {
+                    println!("{} -> {}:{}", domain, lhost, lport);
+                }
+            } else {
+                println!("No config file found, please add proxy using the command `reverse_proxy add_proxy`");
+            }
+        } else if args[1] == "add_proxy" {
             if args.len() < 7 {
                 eprintln!("Error: Missing required arguments for 'start' command.");
                 println!(
-                    "Usage: {} start -domain <domain> -lhost <lhost> -lport <lport>",
+                    "Usage: {} add_proxy -domain <domain> -lhost <lhost> -lport <lport>",
                     args[0]
                 );
                 return;
@@ -78,7 +119,7 @@ async fn main() {
                 _ => {
                     eprintln!("Error: Missing required arguments.");
                     println!(
-                        "Usage: {} start -domain <domain> -lhost <lhost> -lport <lport>",
+                        "Usage: {} add_proxy -domain <domain> -lhost <lhost> -lport <lport>",
                         args[0]
                     );
                 }
@@ -92,7 +133,7 @@ async fn main() {
         }
     } else {
         eprintln!("Error: Missing command.");
-        println!("Usage: {} [start|stop]", args[0]);
+        println!("Usage: {} [add_proxy|stop]", args[0]);
     }
 }
 
