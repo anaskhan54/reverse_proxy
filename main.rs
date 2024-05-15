@@ -4,78 +4,107 @@ use async_std::{
     prelude::*,
 };
 use futures::StreamExt;
+use std::process::Command;
+
 use std::{env, str};
+
+#[cfg(target_os = "windows")]
+fn kill_instances() {
+    Command::new("taskkill")
+        .args(&["/F", "/IM", "reverse_proxy.exe"])
+        .output()
+        .expect("Failed to execute taskkill command");
+}
+
+#[cfg(target_os = "linux")]
+fn kill_instances() {
+    Command::new("pkill")
+        .args(&["reverse_proxy"])
+        .output()
+        .expect("Failed to execute pkill command");
+}
 
 #[async_std::main]
 async fn main() {
     // get command line arguments
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 7 {
-        eprintln!("Error: Missing required arguments.");
-        println!(
-            "Usage: {} -domain <domain> -lhost <lhost> -lport <lport>",
-            args[0]
-        );
-        return;
-    }
-
-    let mut domain = None;
-    let mut lhost = None;
-    let mut lport = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-domain" => {
-                domain = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "-lhost" => {
-                lhost = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "-lport" => {
-                lport = args[i + 1].parse::<u16>().ok();
-                i += 2;
-            }
-            _ => {
-                eprintln!("Error: Invalid argument '{}'", args[i]);
+    if args.len() > 1 {
+        if args[1] == "start" {
+            if args.len() < 7 {
+                eprintln!("Error: Missing required arguments for 'start' command.");
+                println!(
+                    "Usage: {} start -domain <domain> -lhost <lhost> -lport <lport>",
+                    args[0]
+                );
                 return;
             }
-        }
-    }
-    //check if argument valid, then print help message accordingly
 
-    match (domain.as_ref(), lhost.as_ref(), lport) {
-        (Some(domain), Some(lhost), Some(lport)) => {
-            println!("Domain: {}", domain);
-            println!("Lhost: {}", lhost);
-            println!("Lport: {}", lport);
+            let mut domain = None;
+            let mut lhost = None;
+            let mut lport = None;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-domain" => {
+                        domain = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "-lhost" => {
+                        lhost = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "-lport" => {
+                        lport = args[i + 1].parse::<u16>().ok();
+                        i += 2;
+                    }
+                    _ => {
+                        eprintln!("Error: Invalid argument '{}'", args[i]);
+                        return;
+                    }
+                }
+            }
+
+            match (domain.as_ref(), lhost.as_ref(), lport) {
+                (Some(domain), Some(lhost), Some(lport)) => {
+                    println!("Starting the program...");
+                    println!("Domain: {}", domain);
+                    println!("Lhost: {}", lhost);
+                    println!("Lport: {}", lport);
+
+                    start_proxy_server(domain, lhost, lport).await;
+                }
+                _ => {
+                    eprintln!("Error: Missing required arguments.");
+                    println!(
+                        "Usage: {} start -domain <domain> -lhost <lhost> -lport <lport>",
+                        args[0]
+                    );
+                }
+            }
+        } else if args[1] == "stop" {
+            // Call a function to kill all instances of this program
+            kill_instances();
+        } else {
+            eprintln!("Error: Invalid command '{}'", args[1]);
+            println!("Usage: {} [start|stop]", args[0]);
         }
-        _ => {
-            eprintln!("Error: Missing required arguments.");
-            println!(
-                "Usage: {} -domain <domain> -lhost <lhost> -lport <lport>",
-                args[0]
-            );
-        }
+    } else {
+        eprintln!("Error: Missing command.");
+        println!("Usage: {} [start|stop]", args[0]);
     }
-    let listener = TcpListener::bind("127.0.0.1:80").await.unwrap();
+}
+
+async fn start_proxy_server(domain: &str, lhost: &str, lport: u16) {
+    let listener = TcpListener::bind(format!("{}:80", lhost)).await.unwrap();
     println!("\x1b[33mproxy server started on port 80..\x1b[0m");
 
     listener
         .incoming()
         .for_each_concurrent(None, |tcp_stream| async {
             if let Ok(tcp_stream) = tcp_stream {
-                if let Err(e) = handle_connection(
-                    tcp_stream,
-                    domain.as_ref().unwrap(),
-                    lhost.as_ref().unwrap(),
-                    lport.unwrap(),
-                )
-                .await
-                {
+                if let Err(e) = handle_connection(tcp_stream, domain, lhost, lport).await {
                     eprintln!("Error: {:?}", e);
                 }
             }
