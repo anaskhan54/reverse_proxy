@@ -64,10 +64,10 @@ async fn main() {
                     println!("Unable to open config file: {}", file_name);
                     return;
                 }
-
-                for (domain, (lhost, lport)) in &proxy_map {
-                    println!("{} -> {}:{}", domain, lhost, lport);
-                }
+                start_proxy_server(proxy_map).await;
+                // for (domain, (lhost, lport)) in &proxy_map {
+                //     println!("{} -> {}:{}", domain, lhost, lport);
+                // }
             } else {
                 println!("No config file found, please add proxy using the command `reverse_proxy add_proxy`");
             }
@@ -114,7 +114,7 @@ async fn main() {
                     println!("Lhost: {}", lhost);
                     println!("Lport: {}", lport);
 
-                    start_proxy_server(domain, lhost, lport).await;
+                    // start_proxy_server(domain, lhost, lport).await;
                 }
                 _ => {
                     eprintln!("Error: Missing required arguments.");
@@ -129,7 +129,7 @@ async fn main() {
             kill_instances();
         } else {
             eprintln!("Error: Invalid command '{}'", args[1]);
-            println!("Usage: {} [start|stop]", args[0]);
+            println!("Usage: {} [start|add_proxy|stop]", args[0]);
         }
     } else {
         eprintln!("Error: Missing command.");
@@ -137,16 +137,23 @@ async fn main() {
     }
 }
 
-async fn start_proxy_server(domain: &str, lhost: &str, lport: u16) {
-    let listener = TcpListener::bind(format!("{}:80", lhost)).await.unwrap();
+async fn start_proxy_server(proxy_map: HashMap<String, (String, String)>) {
+    let listener = TcpListener::bind("0.0.0.0:80").await.unwrap();
     println!("\x1b[33mproxy server started on port 80..\x1b[0m");
 
     listener
         .incoming()
-        .for_each_concurrent(None, |tcp_stream| async {
-            if let Ok(tcp_stream) = tcp_stream {
-                if let Err(e) = handle_connection(tcp_stream, domain, lhost, lport).await {
-                    eprintln!("Error: {:?}", e);
+        .for_each_concurrent(None, |tcp_stream| {
+            let proxy_map = proxy_map.clone(); // Clone the proxy_map
+            async move {
+                if let Ok(tcp_stream) = tcp_stream {
+                    for (domain, (lhost, lport)) in proxy_map.iter() {
+                        if let Err(e) =
+                            handle_connection(tcp_stream.clone(), domain, lhost, lport).await
+                        {
+                            eprintln!("Error: {:?}", e);
+                        }
+                    }
                 }
             }
         })
@@ -157,7 +164,8 @@ async fn handle_connection(
     mut stream: TcpStream,
     domain: &str,
     lhost: &str,
-    lport: u16,
+    // lport: u16,
+    lport: &str,
 ) -> Result<()> {
     println!("\x1b[32mConnection established\x1b[0m");
 
