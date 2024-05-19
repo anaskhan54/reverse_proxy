@@ -5,10 +5,18 @@ use async_std::{
 };
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::prelude::*;
+use std::io::Write;
 use std::io::{self, BufRead};
 use std::process::Command;
 use std::{env, fs, str};
 
+/*
+*kill the instances of the program running on the system
+*This function is used to kill all the instances of the program running on the system
+*/
 #[cfg(target_os = "windows")]
 fn kill_instances() {
     Command::new("taskkill")
@@ -46,9 +54,11 @@ async fn main() {
 
                 if let Ok(file) = fs::File::open(&file_name) {
                     let lines = io::BufReader::new(file).lines();
+
                     for line_result in lines {
                         if let Ok(line_contents) = line_result {
                             let parts: Vec<&str> = line_contents.split_whitespace().collect();
+
                             if parts.len() == 3 {
                                 let domain = parts[0].to_string();
                                 let lhost = parts[1].to_string();
@@ -65,9 +75,6 @@ async fn main() {
                     return;
                 }
                 start_proxy_server(proxy_map).await;
-                // for (domain, (lhost, lport)) in &proxy_map {
-                //     println!("{} -> {}:{}", domain, lhost, lport);
-                // }
             } else {
                 println!("No config file found, please add proxy using the command `reverse_proxy add_proxy`");
             }
@@ -112,9 +119,41 @@ async fn main() {
                     println!("Starting the program...");
                     println!("Domain: {}", domain);
                     println!("Lhost: {}", lhost);
-                    println!("Lport: {}", lport);
+                    println!("port: {}", lport);
 
-                    // start_proxy_server(domain, lhost, lport).await;
+                    let content = format!("{}  {}  {}\n", domain, lhost, lport);
+
+                    let file = File::open("reverse_proxy.conf");
+                    match file {
+                        Ok(file) => file,
+                        Err(_) => File::create("reverse_proxy.conf").unwrap(),
+                    };
+                    println!("\x1b[33m......Appending proxy to the config file.....\x1b[0m");
+
+                    let mut data_file = File::open("reverse_proxy.conf").unwrap();
+
+                    // Create an empty mutable string
+                    let mut file_content = String::new();
+
+                    // Copy contents of file to a mutable string
+                    data_file.read_to_string(&mut file_content).unwrap();
+
+                    // println!("File content: {:?}", file_content);
+                    if file_content.contains(&domain.to_string()) {
+                        println!("\x1b[31m.........Proxy already exists.........\x1b[0m");
+                        return;
+                    }
+                    if file_content.contains(&lport.to_string()) {
+                        println!("\x1b[31m.........Port already in use.........\x1b[0m");
+                        return;
+                    }
+                    let mut conf_file = OpenOptions::new()
+                        .append(true)
+                        .open("reverse_proxy.conf")
+                        .expect("Cannot open file");
+
+                    conf_file.write_all(content.as_bytes()).unwrap();
+                    println!("\x1b[32m.........Proxy added successfully.........\x1b[0m")
                 }
                 _ => {
                     eprintln!("Error: Missing required arguments.");
@@ -140,24 +179,6 @@ async fn main() {
 async fn start_proxy_server(proxy_map: HashMap<String, (String, String)>) {
     let listener = TcpListener::bind("0.0.0.0:80").await.unwrap();
     println!("\x1b[33mproxy server started on port 80..\x1b[0m");
-
-    // listener
-    //     .incoming()
-    //     .for_each_concurrent(None, |tcp_stream| {
-    //         let proxy_map = proxy_map.clone(); // Clone the proxy_map
-    //         async move {
-    //             if let Ok(tcp_stream) = tcp_stream {
-    //                 for (domain, (lhost, lport)) in proxy_map.iter() {
-    //                     if let Err(e) =
-    //                         handle_connection(tcp_stream.clone(), domain, lhost, lport).await
-    //                     {
-    //                         eprintln!("Error: {:?}", e);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     })
-    //     .await;
 
     listener
         .incoming()
